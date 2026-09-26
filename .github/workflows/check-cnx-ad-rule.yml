@@ -1,8 +1,20 @@
 name: Check CNX Software ad rule
 
+# Fires at six 10-minute slots between 04:00 and 05:00 UTC. On each firing,
+# a lottery decides whether *this* slot is the one that actually runs the
+# check, so only one real check happens per day (no long in-job sleep, no
+# wasted runner minutes). A committed marker file prevents a duplicate
+# run if more than one slot happens to win on the same day, and the last
+# slot always fires as a safety net if none of the earlier ones did.
+
 on:
   schedule:
-    - cron: "0 4 * * *"   # fires at 04:00 UTC; job then sleeps a random amount
+    - cron: "0 4 * * *"
+    - cron: "10 4 * * *"
+    - cron: "20 4 * * *"
+    - cron: "30 4 * * *"
+    - cron: "40 4 * * *"
+    - cron: "50 4 * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -13,27 +25,62 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Random delay (run between 04:00 and 05:00 UTC)
+      - name: Lottery - decide whether this slot runs
+        id: lottery
         run: |
-          DELAY=$(( RANDOM % 3600 ))
-          echo "Sleeping ${DELAY}s before running the check"
-          sleep "$DELAY"
+          TODAY=$(date -u +%F)
+          LAST_RUN="none"
+          if [ -f .last-run-date.txt ]; then
+            LAST_RUN=$(cat .last-run-date.txt)
+          fi
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual dispatch: always run."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$LAST_RUN" = "$TODAY" ]; then
+            echo "Already ran today ($TODAY) in an earlier slot. Skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          MINUTES=(0 10 20 30 40 50)
+          NOW_MIN=$((10#$(date -u +%M)))
+          INDEX=0
+          for i in "${!MINUTES[@]}"; do
+            if [ "${MINUTES[$i]}" -eq "$NOW_MIN" ]; then
+              INDEX=$i
+            fi
+          done
+          TOTAL=${#MINUTES[@]}
+          REMAINING=$((TOTAL - INDEX))
+
+          ROLL=$(( RANDOM % REMAINING ))
+          echo "Slot index=$INDEX remaining=$REMAINING roll=$ROLL"
+          if [ "$ROLL" -eq 0 ]; then
+            echo "This slot wins the lottery. Running the check."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "This slot lost the lottery. Skipping, a later slot may run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run rule checker
-        run: python check_cnx_ad_rule.py
+        if: steps.lottery.outputs.run == 'true'
+        run: python3 check_cnx_ad_rule.py
 
-      - name: Commit updated rule if changed
+      - name: Commit marker and any updated rule
+        if: steps.lottery.outputs.run == 'true'
         run: |
-          if ! git diff --quiet -- cnx-software.txt; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add cnx-software.txt
-            git commit -m "chore: update cnx-software.com ad-block rule"
+          date -u +%F > .last-run-date.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .last-run-date.txt cnx-software.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: daily cnx-software.com ad rule check"
             git push
           else
-            echo "No change to cnx-software.txt"
+            echo "Nothing to commit."
           fi
