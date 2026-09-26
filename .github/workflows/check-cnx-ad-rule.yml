@@ -1,0 +1,39 @@
+name: Check CNX Software ad rule
+
+on:
+  schedule:
+    - cron: "0 4 * * *"   # fires at 04:00 UTC; job then sleeps a random amount
+  workflow_dispatch: {}
+
+jobs:
+  check-rule:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Random delay (run between 04:00 and 05:00 UTC)
+        run: |
+          DELAY=$(( RANDOM % 3600 ))
+          echo "Sleeping ${DELAY}s before running the check"
+          sleep "$DELAY"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run rule checker
+        run: python check_cnx_ad_rule.py
+
+      - name: Commit updated rule if changed
+        run: |
+          if ! git diff --quiet -- cnx-software.txt; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add cnx-software.txt
+            git commit -m "chore: update cnx-software.com ad-block rule"
+            git push
+          else
+            echo "No change to cnx-software.txt"
+          fi
