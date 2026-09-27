@@ -1,20 +1,22 @@
 name: Check CNX Software ad rule
 
-# Fires at six 10-minute slots between 04:00 and 05:00 UTC. On each firing,
-# a lottery decides whether *this* slot is the one that actually runs the
-# check, so only one real check happens per day (no long in-job sleep, no
-# wasted runner minutes). A committed marker file prevents a duplicate
-# run if more than one slot happens to win on the same day, and the last
-# slot always fires as a safety net if none of the earlier ones did.
+# Fires at six irregular-minute slots between 04:00 and 05:00 UTC (avoiding
+# round numbers like :00/:10/:20, which is when GitHub Actions scheduled-
+# event load peaks and runs are most likely to be delayed or dropped).
+# On each firing, a lottery decides whether *this* slot is the one that
+# actually runs the check, so only one real check happens per day (no long
+# in-job sleep, no wasted runner minutes). A committed marker file prevents
+# a duplicate run if more than one slot happens to win on the same day, and
+# the last slot always fires as a safety net if none of the earlier ones did.
 
 on:
   schedule:
-    - cron: "0 4 * * *"
-    - cron: "10 4 * * *"
-    - cron: "20 4 * * *"
-    - cron: "30 4 * * *"
-    - cron: "40 4 * * *"
-    - cron: "50 4 * * *"
+    - cron: "7 4 * * *"
+    - cron: "17 4 * * *"
+    - cron: "24 4 * * *"
+    - cron: "33 4 * * *"
+    - cron: "41 4 * * *"
+    - cron: "52 4 * * *"
   workflow_dispatch: {}
 
 jobs:
@@ -46,11 +48,14 @@ jobs:
             exit 0
           fi
 
-          MINUTES=(0 10 20 30 40 50)
+          MINUTES=(7 17 24 33 41 52)
           NOW_MIN=$((10#$(date -u +%M)))
           INDEX=0
+          BEST_DIFF=999
           for i in "${!MINUTES[@]}"; do
-            if [ "${MINUTES[$i]}" -eq "$NOW_MIN" ]; then
+            DIFF=$(( NOW_MIN - MINUTES[i] ))
+            if [ "$DIFF" -ge 0 ] && [ "$DIFF" -lt "$BEST_DIFF" ]; then
+              BEST_DIFF=$DIFF
               INDEX=$i
             fi
           done
